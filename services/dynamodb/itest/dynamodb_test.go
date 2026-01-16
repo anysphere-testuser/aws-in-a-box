@@ -180,3 +180,262 @@ func TestScanItem_FilterExpression_StringPrimaryKey(t *testing.T) {
 		//t.Fatal("filter not working: ", resp.Count)
 	}
 }
+
+func TestDeleteItem(t *testing.T) {
+	ctx := context.Background()
+	client, srv := makeClientServerPair()
+	defer srv.Shutdown(ctx)
+
+	primaryKey := "pkey"
+	tableName := "test_delete_item"
+
+	// Create table
+	_, err := client.CreateTable(ctx, &dynamodb.CreateTableInput{
+		AttributeDefinitions: []types.AttributeDefinition{
+			{
+				AttributeName: aws.String(primaryKey),
+				AttributeType: types.ScalarAttributeTypeS,
+			},
+		},
+		KeySchema: []types.KeySchemaElement{
+			{
+				AttributeName: aws.String(primaryKey),
+				KeyType:       types.KeyTypeHash,
+			},
+		},
+		TableName: &tableName,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Put an item
+	_, err = client.PutItem(ctx, &dynamodb.PutItemInput{
+		TableName: &tableName,
+		Item: map[string]types.AttributeValue{
+			primaryKey: &types.AttributeValueMemberS{Value: "key1"},
+			"data":     &types.AttributeValueMemberS{Value: "value1"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Verify item exists
+	getResp, err := client.GetItem(ctx, &dynamodb.GetItemInput{
+		TableName: &tableName,
+		Key: map[string]types.AttributeValue{
+			primaryKey: &types.AttributeValueMemberS{Value: "key1"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(getResp.Item) == 0 {
+		t.Fatal("Item should exist before delete")
+	}
+
+	// Delete item and request old values
+	delResp, err := client.DeleteItem(ctx, &dynamodb.DeleteItemInput{
+		TableName: &tableName,
+		Key: map[string]types.AttributeValue{
+			primaryKey: &types.AttributeValueMemberS{Value: "key1"},
+		},
+		ReturnValues: types.ReturnValueAllOld,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Check returned attributes
+	if len(delResp.Attributes) == 0 {
+		t.Fatal("Expected attributes from deleted item")
+	}
+
+	// Verify item is gone
+	getResp, err = client.GetItem(ctx, &dynamodb.GetItemInput{
+		TableName: &tableName,
+		Key: map[string]types.AttributeValue{
+			primaryKey: &types.AttributeValueMemberS{Value: "key1"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(getResp.Item) != 0 {
+		t.Fatal("Item should not exist after delete")
+	}
+}
+
+func TestListTables(t *testing.T) {
+	ctx := context.Background()
+	client, srv := makeClientServerPair()
+	defer srv.Shutdown(ctx)
+
+	primaryKey := "pkey"
+
+	// Create multiple tables
+	tableNames := []string{"alpha", "beta", "gamma"}
+	for _, name := range tableNames {
+		_, err := client.CreateTable(ctx, &dynamodb.CreateTableInput{
+			AttributeDefinitions: []types.AttributeDefinition{
+				{
+					AttributeName: aws.String(primaryKey),
+					AttributeType: types.ScalarAttributeTypeS,
+				},
+			},
+			KeySchema: []types.KeySchemaElement{
+				{
+					AttributeName: aws.String(primaryKey),
+					KeyType:       types.KeyTypeHash,
+				},
+			},
+			TableName: aws.String(name),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// List tables
+	listResp, err := client.ListTables(ctx, &dynamodb.ListTablesInput{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(listResp.TableNames) != 3 {
+		t.Fatalf("Expected 3 tables, got %d", len(listResp.TableNames))
+	}
+
+	// Tables should be sorted
+	expected := []string{"alpha", "beta", "gamma"}
+	for i, name := range listResp.TableNames {
+		if name != expected[i] {
+			t.Fatalf("Expected table %s at position %d, got %s", expected[i], i, name)
+		}
+	}
+}
+
+func TestDeleteTable(t *testing.T) {
+	ctx := context.Background()
+	client, srv := makeClientServerPair()
+	defer srv.Shutdown(ctx)
+
+	primaryKey := "pkey"
+	tableName := "test_delete_table"
+
+	// Create table
+	_, err := client.CreateTable(ctx, &dynamodb.CreateTableInput{
+		AttributeDefinitions: []types.AttributeDefinition{
+			{
+				AttributeName: aws.String(primaryKey),
+				AttributeType: types.ScalarAttributeTypeS,
+			},
+		},
+		KeySchema: []types.KeySchemaElement{
+			{
+				AttributeName: aws.String(primaryKey),
+				KeyType:       types.KeyTypeHash,
+			},
+		},
+		TableName: &tableName,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Verify table exists
+	_, err = client.DescribeTable(ctx, &dynamodb.DescribeTableInput{
+		TableName: &tableName,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Delete table
+	delResp, err := client.DeleteTable(ctx, &dynamodb.DeleteTableInput{
+		TableName: &tableName,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Verify the response contains table description
+	if delResp.TableDescription == nil {
+		t.Fatal("Expected TableDescription in response")
+	}
+	if delResp.TableDescription.TableStatus != types.TableStatusDeleting {
+		t.Fatalf("Expected status DELETING, got %s", delResp.TableDescription.TableStatus)
+	}
+
+	// Verify table is gone
+	_, err = client.DescribeTable(ctx, &dynamodb.DescribeTableInput{
+		TableName: &tableName,
+	})
+	if err == nil {
+		t.Fatal("Expected error for deleted table")
+	}
+}
+
+func TestQuery(t *testing.T) {
+	ctx := context.Background()
+	client, srv := makeClientServerPair()
+	defer srv.Shutdown(ctx)
+
+	primaryKey := "pkey"
+	tableName := "test_query"
+
+	// Create table
+	_, err := client.CreateTable(ctx, &dynamodb.CreateTableInput{
+		AttributeDefinitions: []types.AttributeDefinition{
+			{
+				AttributeName: aws.String(primaryKey),
+				AttributeType: types.ScalarAttributeTypeS,
+			},
+		},
+		KeySchema: []types.KeySchemaElement{
+			{
+				AttributeName: aws.String(primaryKey),
+				KeyType:       types.KeyTypeHash,
+			},
+		},
+		TableName: &tableName,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Put some items
+	for i := 1; i <= 3; i++ {
+		_, err = client.PutItem(ctx, &dynamodb.PutItemInput{
+			TableName: &tableName,
+			Item: map[string]types.AttributeValue{
+				primaryKey: &types.AttributeValueMemberS{Value: fmt.Sprintf("key%d", i)},
+				"data":     &types.AttributeValueMemberS{Value: fmt.Sprintf("value%d", i)},
+			},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Query for specific key using KeyConditions (legacy)
+	queryResp, err := client.Query(ctx, &dynamodb.QueryInput{
+		TableName: &tableName,
+		KeyConditions: map[string]types.Condition{
+			primaryKey: {
+				AttributeValueList: []types.AttributeValue{
+					&types.AttributeValueMemberS{Value: "key2"},
+				},
+				ComparisonOperator: types.ComparisonOperatorEq,
+			},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if queryResp.Count != 1 {
+		t.Fatalf("Expected 1 item, got %d", queryResp.Count)
+	}
+}

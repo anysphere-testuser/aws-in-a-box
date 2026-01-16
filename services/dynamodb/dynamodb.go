@@ -3,6 +3,7 @@ package dynamodb
 import (
 	"log/slog"
 	"reflect"
+	"sort"
 	"sync"
 
 	"aws-in-a-box/arn"
@@ -317,4 +318,147 @@ func (d *DynamoDB) DeleteItem(input DeleteItemInput) (*DeleteItemOutput, *awserr
 	delete(t.ItemByPrimaryKey, key)
 
 	return output, nil
+}
+
+// https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_DeleteTable.html
+func (d *DynamoDB) DeleteTable(input DeleteTableInput) (*DeleteTableOutput, *awserrors.Error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	t, ok := d.tablesByName[input.TableName]
+	if !ok {
+		return nil, awserrors.ResourceNotFoundException("Table does not exist")
+	}
+
+	desc := t.toAPI()
+	desc.TableStatus = "DELETING"
+
+	delete(d.tablesByName, input.TableName)
+
+	return &DeleteTableOutput{
+		TableDescription: desc,
+	}, nil
+}
+
+// https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_ListTables.html
+func (d *DynamoDB) ListTables(input ListTablesInput) (*ListTablesOutput, *awserrors.Error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	var names []string
+	for name := range d.tablesByName {
+		names = append(names, name)
+	}
+
+	// Sort for consistent ordering
+	sort.Strings(names)
+
+	// Handle pagination
+	startIdx := 0
+	if input.ExclusiveStartTableName != "" {
+		for i, name := range names {
+			if name == input.ExclusiveStartTableName {
+				startIdx = i + 1
+				break
+			}
+		}
+	}
+
+	if startIdx >= len(names) {
+		return &ListTablesOutput{
+			TableNames: []string{},
+		}, nil
+	}
+
+	names = names[startIdx:]
+
+	limit := input.Limit
+	if limit <= 0 {
+		limit = 100 // Default limit per AWS docs
+	}
+
+	var lastEvaluatedTableName string
+	if len(names) > limit {
+		lastEvaluatedTableName = names[limit-1]
+		names = names[:limit]
+	}
+
+	return &ListTablesOutput{
+		TableNames:             names,
+		LastEvaluatedTableName: lastEvaluatedTableName,
+	}, nil
+}
+
+// https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_Query.html
+func (d *DynamoDB) Query(input QueryInput) (*QueryOutput, *awserrors.Error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	t, ok := d.tablesByName[input.TableName]
+	if !ok {
+		return nil, awserrors.ResourceNotFoundException("Table does not exist")
+	}
+
+	// For now, support only KeyConditions (legacy API)
+	// A full implementation would parse KeyConditionExpression
+	if len(input.KeyConditions) == 0 && input.KeyConditionExpression == "" {
+		return nil, awserrors.InvalidArgumentException("KeyConditions or KeyConditionExpression required")
+	}
+
+	var results []APIItem
+
+	// Check KeyConditions for partition key match
+	for _, item := range t.ItemByPrimaryKey {
+		matches := true
+
+		if len(input.KeyConditions) > 0 {
+			for attrName, condition := range input.KeyConditions {
+				itemValue, exists := item[attrName]
+				if !exists {
+					matches = false
+					break
+				}
+
+				if len(condition.AttributeValueList) == 0 {
+					matches = false
+					break
+				}
+
+				switch condition.ComparisonOperator {
+				case "EQ":
+					if !reflect.DeepEqual(itemValue, condition.AttributeValueList[0]) {
+						matches = false
+					}
+				default:
+					// For simplicity, only support EQ for now
+					matches = false
+				}
+
+				if !matches {
+					break
+				}
+			}
+		}
+
+		if matches {
+			results = append(results, item)
+		}
+	}
+
+	// Apply limit
+	var lastEvaluatedKey map[string]APIAttributeValue
+	if input.Limit > 0 && len(results) > input.Limit {
+		lastItem := results[input.Limit-1]
+		lastEvaluatedKey = map[string]APIAttributeValue{
+			t.PrimaryKeyAttributeName: lastItem[t.PrimaryKeyAttributeName],
+		}
+		results = results[:input.Limit]
+	}
+
+	return &QueryOutput{
+		Count:            len(results),
+		Items:            results,
+		LastEvaluatedKey: lastEvaluatedKey,
+		ScannedCount:     len(results),
+	}, nil
 }

@@ -142,8 +142,8 @@ type UpdateItemOutput struct {
 
 // DeleteItem types
 type DeleteItemInput struct {
-	ConditionExpression       string
-	Expected                  map[string]struct {
+	ConditionExpression string
+	Expected            map[string]struct {
 		AttributeValueList []APIAttributeValue
 		ComparisonOperator string
 		Exists             *bool
