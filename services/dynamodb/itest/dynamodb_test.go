@@ -439,3 +439,162 @@ func TestQuery(t *testing.T) {
 		t.Fatalf("Expected 1 item, got %d", queryResp.Count)
 	}
 }
+
+func TestBatchGetItem(t *testing.T) {
+	ctx := context.Background()
+	client, srv := makeClientServerPair()
+	defer srv.Shutdown(ctx)
+
+	primaryKey := "pkey"
+	tableName := "test_batch_get"
+
+	// Create table
+	_, err := client.CreateTable(ctx, &dynamodb.CreateTableInput{
+		AttributeDefinitions: []types.AttributeDefinition{
+			{
+				AttributeName: aws.String(primaryKey),
+				AttributeType: types.ScalarAttributeTypeS,
+			},
+		},
+		KeySchema: []types.KeySchemaElement{
+			{
+				AttributeName: aws.String(primaryKey),
+				KeyType:       types.KeyTypeHash,
+			},
+		},
+		TableName: &tableName,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Put some items
+	for i := 1; i <= 3; i++ {
+		_, err = client.PutItem(ctx, &dynamodb.PutItemInput{
+			TableName: &tableName,
+			Item: map[string]types.AttributeValue{
+				primaryKey: &types.AttributeValueMemberS{Value: fmt.Sprintf("key%d", i)},
+				"data":     &types.AttributeValueMemberS{Value: fmt.Sprintf("value%d", i)},
+			},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// BatchGetItem for two keys
+	resp, err := client.BatchGetItem(ctx, &dynamodb.BatchGetItemInput{
+		RequestItems: map[string]types.KeysAndAttributes{
+			tableName: {
+				Keys: []map[string]types.AttributeValue{
+					{primaryKey: &types.AttributeValueMemberS{Value: "key1"}},
+					{primaryKey: &types.AttributeValueMemberS{Value: "key3"}},
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Verify we got two items
+	items := resp.Responses[tableName]
+	if len(items) != 2 {
+		t.Fatalf("Expected 2 items, got %d", len(items))
+	}
+}
+func TestBatchWriteItem(t *testing.T) {
+	ctx := context.Background()
+	client, srv := makeClientServerPair()
+	defer srv.Shutdown(ctx)
+
+	primaryKey := "pkey"
+	tableName := "test_batch_write"
+
+	// Create table
+	_, err := client.CreateTable(ctx, &dynamodb.CreateTableInput{
+		AttributeDefinitions: []types.AttributeDefinition{
+			{
+				AttributeName: aws.String(primaryKey),
+				AttributeType: types.ScalarAttributeTypeS,
+			},
+		},
+		KeySchema: []types.KeySchemaElement{
+			{
+				AttributeName: aws.String(primaryKey),
+				KeyType:       types.KeyTypeHash,
+			},
+		},
+		TableName: &tableName,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// BatchWriteItem - put multiple items
+	_, err = client.BatchWriteItem(ctx, &dynamodb.BatchWriteItemInput{
+		RequestItems: map[string][]types.WriteRequest{
+			tableName: {
+				{
+					PutRequest: &types.PutRequest{
+						Item: map[string]types.AttributeValue{
+							primaryKey: &types.AttributeValueMemberS{Value: "key1"},
+							"data":     &types.AttributeValueMemberS{Value: "value1"},
+						},
+					},
+				},
+				{
+					PutRequest: &types.PutRequest{
+						Item: map[string]types.AttributeValue{
+							primaryKey: &types.AttributeValueMemberS{Value: "key2"},
+							"data":     &types.AttributeValueMemberS{Value: "value2"},
+						},
+					},
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Verify items exist via Scan
+	scanResp, err := client.Scan(ctx, &dynamodb.ScanInput{
+		TableName: &tableName,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(scanResp.Items) != 2 {
+		t.Fatalf("Expected 2 items after BatchWriteItem put, got %d", len(scanResp.Items))
+	}
+
+	// BatchWriteItem - delete one item
+	_, err = client.BatchWriteItem(ctx, &dynamodb.BatchWriteItemInput{
+		RequestItems: map[string][]types.WriteRequest{
+			tableName: {
+				{
+					DeleteRequest: &types.DeleteRequest{
+						Key: map[string]types.AttributeValue{
+							primaryKey: &types.AttributeValueMemberS{Value: "key1"},
+						},
+					},
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Verify only one item remains
+	scanResp, err = client.Scan(ctx, &dynamodb.ScanInput{
+		TableName: &tableName,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(scanResp.Items) != 1 {
+		t.Fatalf("Expected 1 item after BatchWriteItem delete, got %d", len(scanResp.Items))
+	}
+}

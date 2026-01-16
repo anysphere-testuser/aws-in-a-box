@@ -462,3 +462,72 @@ func (d *DynamoDB) Query(input QueryInput) (*QueryOutput, *awserrors.Error) {
 		ScannedCount:     len(results),
 	}, nil
 }
+
+// https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_BatchGetItem.html
+func (d *DynamoDB) BatchGetItem(input BatchGetItemInput) (*BatchGetItemOutput, *awserrors.Error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	responses := make(map[string][]APIItem)
+	unprocessedKeys := make(map[string]KeysAndAttributes)
+
+	for tableName, keysAndAttributes := range input.RequestItems {
+		t, ok := d.tablesByName[tableName]
+		if !ok {
+			return nil, awserrors.ResourceNotFoundException("Table does not exist: " + tableName)
+		}
+
+		var items []APIItem
+		for _, keyMap := range keysAndAttributes.Keys {
+			key := d.lockedGetPrimaryKeyFromItem(t, keyMap)
+			if key == "" {
+				continue
+			}
+			if item, exists := t.ItemByPrimaryKey[key]; exists {
+				items = append(items, item)
+			}
+		}
+		responses[tableName] = items
+	}
+
+	return &BatchGetItemOutput{
+		Responses:       responses,
+		UnprocessedKeys: unprocessedKeys,
+	}, nil
+}
+
+// https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_BatchWriteItem.html
+func (d *DynamoDB) BatchWriteItem(input BatchWriteItemInput) (*BatchWriteItemOutput, *awserrors.Error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	unprocessedItems := make(map[string][]WriteRequest)
+
+	for tableName, writeRequests := range input.RequestItems {
+		t, ok := d.tablesByName[tableName]
+		if !ok {
+			return nil, awserrors.ResourceNotFoundException("Table does not exist: " + tableName)
+		}
+
+		for _, req := range writeRequests {
+			if req.PutRequest != nil {
+				key := d.lockedGetPrimaryKeyFromItem(t, req.PutRequest.Item)
+				if key == "" {
+					continue
+				}
+				t.ItemByPrimaryKey[key] = req.PutRequest.Item
+			}
+			if req.DeleteRequest != nil {
+				key := d.lockedGetPrimaryKeyFromItem(t, req.DeleteRequest.Key)
+				if key == "" {
+					continue
+				}
+				delete(t.ItemByPrimaryKey, key)
+			}
+		}
+	}
+
+	return &BatchWriteItemOutput{
+		UnprocessedItems: unprocessedItems,
+	}, nil
+}

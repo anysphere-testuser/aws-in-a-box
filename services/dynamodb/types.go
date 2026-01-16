@@ -213,3 +213,61 @@ type QueryOutput struct {
 	LastEvaluatedKey map[string]APIAttributeValue
 	ScannedCount     int
 }
+
+// BatchGetItem types
+type BatchGetItemInput struct {
+	RequestItems map[string]KeysAndAttributes
+	ReturnConsumedCapacity string
+}
+
+type KeysAndAttributes struct {
+	AttributesToGet          []string
+	ConsistentRead           bool
+	ExpressionAttributeNames map[string]string
+	Keys                     []map[string]APIAttributeValue
+	ProjectionExpression     string
+}
+
+type BatchGetItemOutput struct {
+	ConsumedCapacity []ConsumedCapacity
+	Responses        map[string][]APIItem
+	UnprocessedKeys  map[string]KeysAndAttributes
+}
+
+type ConsumedCapacity struct {
+	CapacityUnits      float64
+	ReadCapacityUnits  float64
+	TableName          string
+	WriteCapacityUnits float64
+}
+
+// BatchWriteItem types
+type BatchWriteItemInput struct {
+	RequestItems           map[string][]WriteRequest
+	ReturnConsumedCapacity string
+	ReturnItemCollectionMetrics string
+}
+
+type WriteRequest struct {
+	DeleteRequest *DeleteRequest
+	PutRequest    *PutRequest
+}
+
+type DeleteRequest struct {
+	Key map[string]APIAttributeValue
+}
+
+type PutRequest struct {
+	Item APIItem
+}
+
+type BatchWriteItemOutput struct {
+	ConsumedCapacity      []ConsumedCapacity
+	ItemCollectionMetrics map[string][]ItemCollectionMetrics
+	UnprocessedItems      map[string][]WriteRequest
+}
+
+type ItemCollectionMetrics struct {
+	ItemCollectionKey   map[string]APIAttributeValue
+	SizeEstimateRangeGB []float64
+}

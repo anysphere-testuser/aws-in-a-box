@@ -9,6 +9,8 @@ import (
 const service = "DynamoDB_20120810"
 
 func (d *DynamoDB) RegisterHTTPHandlers(logger *slog.Logger, methodRegistry http.Registry) {
+	http.Register(logger, methodRegistry, service, "BatchGetItem", d.BatchGetItem)
+	http.Register(logger, methodRegistry, service, "BatchWriteItem", d.BatchWriteItem)
 	http.Register(logger, methodRegistry, service, "CreateTable", d.CreateTable)
 	http.Register(logger, methodRegistry, service, "DeleteItem", d.DeleteItem)
 	http.Register(logger, methodRegistry, service, "DeleteTable", d.DeleteTable)
