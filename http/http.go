@@ -58,9 +58,13 @@ func strictUnmarshal(r io.Reader, contentType string, target any) error {
 	return nil
 }
 
+
 func writeResponse(w http.ResponseWriter, output any, awserr *awserrors.Error, contentType string) {
+	// Set Content-Type header before WriteHeader is called
+	w.Header().Set("Content-Type", contentType)
+
 	if awserr != nil {
-		// TODO: correct error handling
+		w.Header().Set("x-amzn-ErrorType", awserr.Body.Type)
 		w.WriteHeader(awserr.Code)
 		output = awserr.Body
 	} else {
@@ -85,7 +89,6 @@ func writeResponse(w http.ResponseWriter, output any, awserr *awserrors.Error, c
 	}
 	w.Write(data)
 }
-
 type Registry = map[string]http.HandlerFunc
 
 func Register[Input any, Output any](
