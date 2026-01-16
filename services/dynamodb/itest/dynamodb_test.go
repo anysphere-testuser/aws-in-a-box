@@ -598,3 +598,73 @@ func TestBatchWriteItem(t *testing.T) {
 		t.Fatalf("Expected 1 item after BatchWriteItem delete, got %d", len(scanResp.Items))
 	}
 }
+
+
+func TestUpdateItem_ReturnValues(t *testing.T) {
+	ctx := context.Background()
+	client, srv := makeClientServerPair()
+	defer srv.Shutdown(ctx)
+
+	primaryKey := "pkey"
+	tableName := "test_update_return_values"
+
+	// Create table
+	_, err := client.CreateTable(ctx, &dynamodb.CreateTableInput{
+		AttributeDefinitions: []types.AttributeDefinition{
+			{
+				AttributeName: aws.String(primaryKey),
+				AttributeType: types.ScalarAttributeTypeS,
+			},
+		},
+		KeySchema: []types.KeySchemaElement{
+			{
+				AttributeName: aws.String(primaryKey),
+				KeyType:       types.KeyTypeHash,
+			},
+		},
+		TableName: &tableName,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Put initial item
+	_, err = client.PutItem(ctx, &dynamodb.PutItemInput{
+		TableName: &tableName,
+		Item: map[string]types.AttributeValue{
+			primaryKey: &types.AttributeValueMemberS{Value: "key1"},
+			"data":     &types.AttributeValueMemberS{Value: "value1"},
+			"counter":  &types.AttributeValueMemberN{Value: "10"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// UpdateItem with ALL_OLD return values
+	updResp, err := client.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+		TableName: &tableName,
+		Key: map[string]types.AttributeValue{
+			primaryKey: &types.AttributeValueMemberS{Value: "key1"},
+		},
+		AttributeUpdates: map[string]types.AttributeValueUpdate{
+			"data": {
+				Action: types.AttributeActionPut,
+				Value:  &types.AttributeValueMemberS{Value: "value2"},
+			},
+		},
+		ReturnValues: types.ReturnValueAllOld,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Verify old values were returned
+	if len(updResp.Attributes) == 0 {
+		t.Fatal("Expected old attributes to be returned")
+	}
+	dataAttr := updResp.Attributes["data"]
+	if dataAttr == nil {
+		t.Fatal("Expected data attribute in response")
+	}
+}

@@ -202,6 +202,19 @@ func (d *DynamoDB) GetItem(input GetItemInput) (*GetItemOutput, *awserrors.Error
 	return &GetItemOutput{Item: item}, nil
 }
 
+
+// copyItem creates a shallow copy of an item
+func copyItem(item APIItem) APIItem {
+	if item == nil {
+		return nil
+	}
+	copy := make(APIItem)
+	for k, v := range item {
+		copy[k] = v
+	}
+	return copy
+}
+
 // https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_UpdateItem.html
 func (d *DynamoDB) UpdateItem(input UpdateItemInput) (*UpdateItemOutput, *awserrors.Error) {
 	d.mu.Lock()
@@ -217,17 +230,27 @@ func (d *DynamoDB) UpdateItem(input UpdateItemInput) (*UpdateItemOutput, *awserr
 	if key == "" {
 		return nil, awserrors.InvalidArgumentException("PrimaryKey must be provided")
 	}
-	existingItem, ok := t.ItemByPrimaryKey[key]
+	existingItem, exists := t.ItemByPrimaryKey[key]
 
-	if !ok {
+	// Save old item for ReturnValues
+	var oldItem APIItem
+	if exists {
+		oldItem = copyItem(existingItem)
+	}
+
+	if !exists {
 		existingItem = make(map[string]APIAttributeValue)
+		// Copy key attributes to the new item
+		for k, v := range input.Key {
+			existingItem[k] = v
+		}
 	}
 
 	// Check preconditions
 	for attribute, expectation := range input.Expected {
-		attr, exists := existingItem[attribute]
+		attr, attrExists := oldItem[attribute]
 		if expectation.Exists != nil {
-			if *expectation.Exists != exists {
+			if *expectation.Exists != attrExists {
 				return nil, awserrors.ConditionalCheckFailedException("Attribute exists mismatch")
 			}
 		}
@@ -246,30 +269,56 @@ func (d *DynamoDB) UpdateItem(input UpdateItemInput) (*UpdateItemOutput, *awserr
 		}
 	}
 
+	// Track updated attributes for ReturnValues
+	updatedAttributes := make(map[string]bool)
+
 	// Perform update
-	// TODO: handle ReturnValues
 	for attribute, update := range input.AttributeUpdates {
+		updatedAttributes[attribute] = true
 		switch update.Action {
 		case "PUT":
 			existingItem[attribute] = update.Value
 		case "DELETE":
 			delete(existingItem, attribute)
 		case "ADD":
-			// TODO
-			// fallthrough
+			// TODO: implement ADD action for numeric and set types
 		default:
 			return nil, awserrors.InvalidArgumentException("Invalid update action: " + update.Action)
 		}
 	}
 
-	// If this was an insert, not an update, we need to commit it.
-	if !ok {
-		t.ItemByPrimaryKey[key] = existingItem
+	// Commit the item (new or existing)
+	t.ItemByPrimaryKey[key] = existingItem
+
+	// Handle ReturnValues
+	output := &UpdateItemOutput{}
+	switch input.ReturnValues {
+	case UpdateItems_NONE, "":
+		// Don't return anything
+	case UpdateItems_ALL_OLD:
+		output.Attributes = oldItem
+	case UpdateItems_UPDATED_OLD:
+		if oldItem != nil {
+			output.Attributes = make(APIItem)
+			for attr := range updatedAttributes {
+				if val, ok := oldItem[attr]; ok {
+					output.Attributes[attr] = val
+				}
+			}
+		}
+	case UpdateItems_ALL_NEW:
+		output.Attributes = copyItem(existingItem)
+	case UpdateItems_UPDATED_NEW:
+		output.Attributes = make(APIItem)
+		for attr := range updatedAttributes {
+			if val, ok := existingItem[attr]; ok {
+				output.Attributes[attr] = val
+			}
+		}
 	}
 
-	return &UpdateItemOutput{}, nil
+	return output, nil
 }
-
 // https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_DeleteItem.html
 func (d *DynamoDB) DeleteItem(input DeleteItemInput) (*DeleteItemOutput, *awserrors.Error) {
 	d.mu.Lock()
