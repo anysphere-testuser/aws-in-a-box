@@ -268,3 +268,53 @@ func (d *DynamoDB) UpdateItem(input UpdateItemInput) (*UpdateItemOutput, *awserr
 
 	return &UpdateItemOutput{}, nil
 }
+
+// https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_DeleteItem.html
+func (d *DynamoDB) DeleteItem(input DeleteItemInput) (*DeleteItemOutput, *awserrors.Error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	t, ok := d.tablesByName[input.TableName]
+	if !ok {
+		return nil, awserrors.ResourceNotFoundException("Table does not exist")
+	}
+
+	key := d.lockedGetPrimaryKeyFromItem(t, input.Key)
+	if key == "" {
+		return nil, awserrors.InvalidArgumentException("PrimaryKey must be provided")
+	}
+
+	existingItem, exists := t.ItemByPrimaryKey[key]
+
+	// Check preconditions (Expected parameter)
+	for attribute, expectation := range input.Expected {
+		attr, attrExists := existingItem[attribute]
+		if expectation.Exists != nil {
+			if *expectation.Exists != attrExists {
+				return nil, awserrors.ConditionalCheckFailedException("Attribute exists mismatch")
+			}
+		}
+		switch expectation.ComparisonOperator {
+		case "":
+		case "EQ":
+			if !reflect.DeepEqual(attr, expectation.Value) {
+				return nil, awserrors.ConditionalCheckFailedException("Attribute EQ mismatch")
+			}
+		case "NE":
+			if reflect.DeepEqual(attr, expectation.Value) {
+				return nil, awserrors.ConditionalCheckFailedException("Attribute NE mismatch")
+			}
+		default:
+			return nil, awserrors.InvalidArgumentException("Invalid expectation comparison operator: " + expectation.ComparisonOperator)
+		}
+	}
+
+	output := &DeleteItemOutput{}
+	if input.ReturnValues == DeleteItem_ALL_OLD && exists {
+		output.Attributes = existingItem
+	}
+
+	delete(t.ItemByPrimaryKey, key)
+
+	return output, nil
+}

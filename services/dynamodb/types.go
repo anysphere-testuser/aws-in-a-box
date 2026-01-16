@@ -139,3 +139,77 @@ type UpdateItemInput struct {
 type UpdateItemOutput struct {
 	Attributes APIItem
 }
+
+// DeleteItem types
+type DeleteItemInput struct {
+	ConditionExpression       string
+	Expected                  map[string]struct {
+		AttributeValueList []APIAttributeValue
+		ComparisonOperator string
+		Exists             *bool
+		Value              APIAttributeValue
+	}
+	ExpressionAttributeNames  map[string]string
+	ExpressionAttributeValues map[string]APIAttributeValue
+	Key                       map[string]APIAttributeValue
+	ReturnValues              DeleteItemReturnValues
+	TableName                 string
+}
+
+type DeleteItemReturnValues string
+
+const (
+	DeleteItem_NONE    = DeleteItemReturnValues("NONE")
+	DeleteItem_ALL_OLD = DeleteItemReturnValues("ALL_OLD")
+)
+
+type DeleteItemOutput struct {
+	Attributes APIItem
+}
+
+// DeleteTable types
+type DeleteTableInput struct {
+	TableName string
+}
+
+type DeleteTableOutput struct {
+	TableDescription APITableDescription
+}
+
+// ListTables types
+type ListTablesInput struct {
+	ExclusiveStartTableName string
+	Limit                   int
+}
+
+type ListTablesOutput struct {
+	LastEvaluatedTableName string
+	TableNames             []string
+}
+
+// Query types
+type QueryInput struct {
+	ConsistentRead            bool
+	ExclusiveStartKey         map[string]APIAttributeValue
+	ExpressionAttributeNames  map[string]string
+	ExpressionAttributeValues map[string]APIAttributeValue
+	FilterExpression          string
+	IndexName                 string
+	KeyConditionExpression    string
+	KeyConditions             map[string]struct {
+		AttributeValueList []APIAttributeValue
+		ComparisonOperator string
+	}
+	Limit                int
+	ProjectionExpression string
+	ScanIndexForward     *bool
+	Select               string
+	TableName            string
+}
+
+type QueryOutput struct {
+	Count            int
+	Items            []APIItem
+	LastEvaluatedKey map[string]APIAttributeValue
+	ScannedCount     int
+}
